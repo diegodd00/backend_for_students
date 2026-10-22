@@ -1,150 +1,273 @@
-const {Request, Response} = require('express');
-const {leerDatos, escribirDatos, generarId} = require('../utils/fileReadHandler');
 
-//============================================================
-//GET /api/v1/usuarios -> Listar todos los usuarios
-//============================================================
-const getUsuarios = (req = Request, res = Response) => {
-  const usuarios = leerDatos();
-  res.json({
-    total: usuarios.length,
-    data: usuarios,
+const supabase = require("../config/supabase");
+const bcrypt = require("bcryptjs");
+
+// GET /api/v1/usuarios
+const getUsuarios = async (req, res) => {
+  const { data, error } = await supabase
+    .from("usuarios")
+    .select("id, nombre, email, edad, username, created_at")
+    .order("id", { ascending: true });
+
+  if (error) {
+    console.error("Error al consultar usuarios:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "No se pudieron consultar los usuarios",
+    });
+  }
+
+  return res.json({
+    total: data.length,
+    data,
   });
 };
 
-//============================================================
-//GET /api/v1/usuarios/:id -> Obtener un usuario por ID
-//============================================================
-const getUsuarioById = (req = Request, res = Response) => {
-  const id = parseInt(req.params.id);
-  const usuarios = leerDatos();
-  const usuario = usuarios.find((u) => u.id === id);
+// GET /api/v1/usuarios/:id
+const getUsuarioById = async (req, res) => {
+  const id = Number(req.params.id);
 
-  if (!usuario) {
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({
+      status: "error",
+      message: "El ID debe ser un entero positivo",
+    });
+  }
+
+  const { data, error } = await supabase
+    .from("usuarios")
+    .select("id, nombre, email, edad, username, created_at")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error al consultar usuario:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "No se pudo consultar el usuario",
+    });
+  }
+
+  if (!data) {
     return res.status(404).json({
       status: "error",
       message: `Usuario con id ${id} no encontrado`,
     });
   }
 
-  res.json(usuario);
+  return res.json(data);
 };
 
-//============================================================
-//POST /api/v1/usuarios -> Crear un nuevo usuario
-//============================================================
-const crearUsuario = (req = Request, res = Response) => {
-    const {nombre, email, edad, username, password} = req.body;
+// POST /api/v1/usuarios
+const crearUsuario = async (req, res) => {
+  const { nombre, email, edad, username, password } = req.body;
 
-    //validacion de los campos obligatorios
-    if (!nombre || !email || !edad || !username || !password) {
-        return res.status(400).json({
-            status: "error",
-            message: "Todos los campos son obligatorios",
-        });
-    }
-
-    const usuarios = leerDatos();
-
-    if(usuarios.some(u => u.email === email)) {
-
-        return res.status(400).json({
-            status: "error",
-            message: "El email ya está registrado",
-        });
-    }
-
-    const nuevoUsuario = {
-        id: generarId(usuarios),
-        nombre:nombre.trim(),
-        email:email.trim(),
-        edad:parseInt(edad) || null,
-        username:username.trim(),
-        password:password.trim()
-    };
-
-    usuarios.push(nuevoUsuario);
-    
-    if(!escribirDatos(usuarios)) {
-        return res.status(500).json({
-            status: "error",
-            message: "Error al guardar el usuario",
-        });
-    }
-
-    res.status(201).json({
-        status: "success",
-        message: "Usuario creado exitosamente",
-        data: nuevoUsuario
+  if (
+    typeof nombre !== "string" ||
+    typeof email !== "string" ||
+    typeof username !== "string" ||
+    typeof password !== "string" ||
+    nombre.trim() === "" ||
+    email.trim() === "" ||
+    username.trim() === "" ||
+    password.length < 8 ||
+    edad === undefined ||
+    edad === null ||
+    edad === ""
+  ) {
+    return res.status(400).json({
+      status: "error",
+      message:
+        "Ingresa nombre, email, edad, username y password. La contraseña debe tener al menos 8 caracteres.",
     });
+  }
+
+  const edadNumero = Number(edad);
+
+  if (!Number.isInteger(edadNumero) || edadNumero < 1 || edadNumero > 120) {
+    return res.status(400).json({
+      status: "error",
+      message: "La edad debe ser un entero entre 1 y 120",
+    });
+  }
+
+  const nombreLimpio = nombre.trim();
+  const emailLimpio = email.trim().toLowerCase();
+  const usernameLimpio = username.trim();
+
+  const passwordHash = await bcrypt.hash(password, 12);
+
+  const { data, error } = await supabase
+    .from("usuarios")
+    .insert({
+      nombre: nombreLimpio,
+      email: emailLimpio,
+      edad: edadNumero,
+      username: usernameLimpio,
+      password_hash: passwordHash,
+    })
+    .select("id, nombre, email, edad, username, created_at")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({
+        status: "error",
+        message: "El email o el nombre de usuario ya está registrado",
+      });
+    }
+
+    console.error("Error al crear usuario:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "No se pudo crear el usuario",
+    });
+  }
+
+  return res.status(201).json({
+    status: "success",
+    message: "Usuario creado exitosamente",
+    data,
+  });
 };
 
-//============================================================
-//PUT /api/v1/usuarios/:id -> Actualizar un usuario por ID
-//============================================================
-const actualizarUsuario = (req = Request, res = Response) => {
-    const id = parseInt(req.params.id);
-    const {nombre, email, edad} = req.body;
+// PUT /api/v1/usuarios/:id
+const actualizarUsuario = async (req, res) => {
+  const id = Number(req.params.id);
+  const { nombre, email, edad, username } = req.body;
 
-    const usuarios = leerDatos();
-    //buscamos el usuario por id en el arreglo de objetos JSON y obtenemos su índice
-    const usuarioIndex = usuarios.findIndex((u) => u.id === id);
-
-    //retornamos un error si el usuario no existe (404) y una respuesta en formato JSON con el mensaje de error
-    if(usuarioIndex === -1) {
-        return res.status(404).json({
-            status: "error",
-            message: `Usuario con id ${id} no encontrado`,
-        });
-    }
-
-    if(email && usuarios.some(u => u.email === email && u.id !== id)) {
-        return res.status(400).json({
-            status: "error",
-            message: "El email ya está registrado por otro usuario",
-        });
-    }
-
-    usuarios[usuarioIndex] = {
-        ...usuarios[usuarioIndex],
-        //utilizacion de if ternario para validar si el campo es nulo o undefined, en caso de serlo se mantiene el valor anterior del usuario
-        nombre: nombre ? nombre.trim() : usuarios[usuarioIndex].nombre,
-        email: email ? email.trim() : usuarios[usuarioIndex].email,
-        edad: edad ? parseInt(edad) : usuarios[usuarioIndex].edad
-    };
-
-    escribirDatos(usuarios);
-
-    res.json({
-        status: "success",
-        message: "Usuario actualizado exitosamente",
-        data: usuarios[usuarioIndex]
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({
+      status: "error",
+      message: "El ID debe ser un entero positivo",
     });
+  }
+
+  const cambios = {};
+
+  if (nombre !== undefined) {
+    if (typeof nombre !== "string" || nombre.trim() === "") {
+      return res.status(400).json({
+        status: "error",
+        message: "El nombre no puede estar vacío",
+      });
+    }
+    cambios.nombre = nombre.trim();
+  }
+
+  if (email !== undefined) {
+    if (typeof email !== "string" || email.trim() === "") {
+      return res.status(400).json({
+        status: "error",
+        message: "El email no puede estar vacío",
+      });
+    }
+    cambios.email = email.trim().toLowerCase();
+  }
+
+  if (username !== undefined) {
+    if (typeof username !== "string" || username.trim() === "") {
+      return res.status(400).json({
+        status: "error",
+        message: "El username no puede estar vacío",
+      });
+    }
+    cambios.username = username.trim();
+  }
+
+  if (edad !== undefined) {
+    const edadNumero = Number(edad);
+
+    if (!Number.isInteger(edadNumero) || edadNumero < 1 || edadNumero > 120) {
+      return res.status(400).json({
+        status: "error",
+        message: "La edad debe ser un entero entre 1 y 120",
+      });
+    }
+    cambios.edad = edadNumero;
+  }
+
+  if (Object.keys(cambios).length === 0) {
+    return res.status(400).json({
+      status: "error",
+      message: "Debes enviar al menos un campo para actualizar",
+    });
+  }
+
+  const { data, error } = await supabase
+    .from("usuarios")
+    .update(cambios)
+    .eq("id", id)
+    .select("id, nombre, email, edad, username, created_at")
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({
+        status: "error",
+        message: "El email o el nombre de usuario ya está registrado",
+      });
+    }
+
+    console.error("Error al actualizar usuario:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "No se pudo actualizar el usuario",
+    });
+  }
+
+  if (!data) {
+    return res.status(404).json({
+      status: "error",
+      message: `Usuario con id ${id} no encontrado`,
+    });
+  }
+
+  return res.json({
+    status: "success",
+    message: "Usuario actualizado exitosamente",
+    data,
+  });
 };
 
-//============================================================
-//DELETE /api/v1/usuarios/:id -> Eliminar un usuario por ID
-//============================================================
-const eliminarUsuario = (req = Request, res = Response) => {
-    const id = parseInt(req.params.id);
-    const usuarios = leerDatos();
-    const usuarioIndex = usuarios.findIndex((u) => u.id === id);
+// DELETE /api/v1/usuarios/:id
+const eliminarUsuario = async (req, res) => {
+  const id = Number(req.params.id);
 
-    if(usuarioIndex === -1) {
-        return res.status(404).json({
-            status: "error",
-            message: `Usuario con id ${id} no encontrado`,
-        });
-    }
-
-    const usuarioEliminado = usuarios.splice(usuarioIndex, 1)[0];
-    escribirDatos(usuarios);
-
-    res.json({
-        status: "success",
-        message: "Usuario eliminado exitosamente",
-        data: usuarioEliminado
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({
+      status: "error",
+      message: "El ID debe ser un entero positivo",
     });
+  }
+
+  const { data, error } = await supabase
+    .from("usuarios")
+    .delete()
+    .eq("id", id)
+    .select("id, nombre, email, edad, username, created_at")
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error al eliminar usuario:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "No se pudo eliminar el usuario",
+    });
+  }
+
+  if (!data) {
+    return res.status(404).json({
+      status: "error",
+      message: `Usuario con id ${id} no encontrado`,
+    });
+  }
+
+  return res.json({
+    status: "success",
+    message: "Usuario eliminado exitosamente",
+    data,
+  });
 };
 
 module.exports = {
@@ -152,6 +275,5 @@ module.exports = {
   getUsuarioById,
   crearUsuario,
   actualizarUsuario,
-  eliminarUsuario
+  eliminarUsuario,
 };
-
