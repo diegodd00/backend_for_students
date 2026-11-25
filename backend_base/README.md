@@ -29,3 +29,17 @@ Utilizaremos los siguientes dependencias
 y dependencias de desarrollo como lo son
 -> nodemon
 
+## Conexión a PostgreSQL
+
+La conexión se configura mediante `URL_DB` en el archivo `.env`. Copia `.env.example`
+a `.env` y reemplaza el usuario, contraseña, host, puerto y nombre de la base de datos
+por los de tu instalación de PostgreSQL. No compartas ni subas el archivo `.env`.
+
+Para Render, usa la **External Database URL** que aparece en el menú **Connect** de la
+base de datos; la URL interna solo funciona desde servicios Render en la misma región.
+La conexión usa TLS por defecto (`DB_SSL=true`). Para una base local que no tenga SSL,
+configura `DB_SSL=false`.
+
+La aplicación prueba la conexión al iniciar y la cierra al recibir `SIGINT` o
+`SIGTERM`. El módulo `src/database/postgres.database.js` exporta `client` para ejecutar
+consultas; usa parámetros (`$1`, `$2`, ...) en lugar de concatenar valores en SQL.

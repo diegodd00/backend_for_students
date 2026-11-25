@@ -22,5 +22,13 @@
     "edad": 28,
     "username": "Diana_Net",
     "password": "3r4t5y56u6"
+  },
+  {
+    "id": 6,
+    "nombre": "Ana Gonzales",
+    "email": "ana@example.com",
+    "edad": 28,
+    "username": "ana28",
+    "password": "********"
   }
 ]
